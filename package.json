@@ -4,11 +4,10 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server-new.ts",
-    "dev:old": "tsx server.ts",
-    "start": "node dist/server-new.js",
+    "dev": "tsx server.ts",
+    "start": "node dist/server.js",
     "build": "tsc --project tsconfig.server.json",
-    "preview": "node dist/server-new.js",
+    "preview": "node dist/server.js",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "type-check": "tsc --noEmit --skipLibCheck"
