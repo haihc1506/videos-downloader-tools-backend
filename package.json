@@ -6,9 +6,9 @@
   "scripts": {
     "dev": "tsx server.ts",
     "dev:old": "tsx server.ts",
-    "start": "node dist/server-new.cjs",
+    "start": "node dist/server.cjs",
     "build": "tsc --project tsconfig.server.json",
-    "preview": "node dist/server-new.js",
+    "preview": "node dist/server.js",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "type-check": "tsc --noEmit --skipLibCheck"
