@@ -8,6 +8,8 @@
     "noEmit": false,
     "allowImportingTsExtensions": false,
     "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noImplicitAny": false,
     "lib": ["ES2020"]
   },
   "include": ["server.ts", "server/**/*.ts"]
