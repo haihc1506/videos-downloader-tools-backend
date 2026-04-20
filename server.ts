@@ -42,7 +42,18 @@ async function startServer() {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
-  async function processUrl(url: string, noWatermark: boolean) {
+  async function processUrl(
+    url: string,
+    noWatermark: boolean
+  ): Promise<{
+    type: 'image' | 'video';
+    title: string;
+    desc: string;
+    images?: string[];
+    videoUrl?: string;
+    coverUrl?: string;
+    author: string;
+  }> {
     const isTikTok = url.includes('tiktok.com');
     const isDouyin = url.includes('douyin.com');
     const isXHS = url.includes('xiaohongshu.com') || url.includes('xhslink.com');
@@ -214,7 +225,7 @@ async function startServer() {
     }
 
     // 3. Navigate the JSON to find the video URL
-    let noteData = null;
+    let noteData: any = null;
     if (initialState?.note?.noteDetailMap) {
       noteData = (Object.values(initialState.note.noteDetailMap)[0] as any)?.note;
     } else if (initialState?.noteData?.data?.noteData) {
@@ -228,7 +239,7 @@ async function startServer() {
     }
 
     if (noteData.type !== 'video' && noteData.type !== 'normal') {
-       const images = noteData.imageList?.map((img: any) => img.urlDefault || img.url) || [];
+       const images: string[] = (noteData.imageList || []).map((img: any) => img.urlDefault || img.url);
        if (images.length > 0) {
            return {
                type: 'image',
@@ -288,7 +299,12 @@ async function startServer() {
         return res.status(400).json({ error: 'URLs array is required' });
       }
 
-      const results = [];
+      const results: Array<{
+        url: string;
+        success: boolean;
+        data?: any;
+        error?: string;
+      }> = [];
       for (const url of urls) {
         try {
           const result = await processUrl(url, !!noWatermark);
