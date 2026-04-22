@@ -1,16 +1,17 @@
-import express from 'express';
-import { createServer as createViteServer } from 'vite';
-import path from 'path';
-import axios from 'axios';
-import * as cheerio from 'cheerio';
-import fs from 'fs';
-import os from 'os';
-import { v4 as uuidv4 } from 'uuid';
-import ffmpeg from 'fluent-ffmpeg';
-import ffmpegStatic from 'ffmpeg-static';
-import archiver from 'archiver';
-import { GoogleGenAI } from '@google/genai';
-import dotenv from 'dotenv';
+import express from "express";
+import { createServer as createViteServer } from "vite";
+import path from "path";
+import axios from "axios";
+import * as cheerio from "cheerio";
+import fs from "fs";
+import os from "os";
+import { v4 as uuidv4 } from "uuid";
+import ffmpeg from "fluent-ffmpeg";
+import ffmpegStatic from "ffmpeg-static";
+import archiver from "archiver";
+import { GoogleGenAI } from "@google/genai";
+import { ElevenLabsClient, play } from "@elevenlabs/elevenlabs-js";
+import dotenv from "dotenv";
 
 // Load environment variables
 dotenv.config();
@@ -21,32 +22,35 @@ if (ffmpegStatic) {
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT || 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // Middleware
-  app.use(express.json({ limit: '50mb' }));
+  app.use(express.json({ limit: "50mb" }));
 
   // CORS middleware
   app.use((_req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    if (_req.method === 'OPTIONS') {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header(
+      "Access-Control-Allow-Methods",
+      "GET, POST, PUT, DELETE, OPTIONS",
+    );
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    if (_req.method === "OPTIONS") {
       return res.sendStatus(200);
     }
     next();
   });
 
   // Health check endpoint
-  app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  app.get("/api/health", (_req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
   async function processUrl(
     url: string,
-    noWatermark: boolean
+    noWatermark: boolean,
   ): Promise<{
-    type: 'image' | 'video';
+    type: "image" | "video";
     title: string;
     desc: string;
     images?: string[];
@@ -54,38 +58,43 @@ async function startServer() {
     coverUrl?: string;
     author: string;
   }> {
-    const isTikTok = url.includes('tiktok.com');
-    const isDouyin = url.includes('douyin.com');
-    const isXHS = url.includes('xiaohongshu.com') || url.includes('xhslink.com');
+    const isTikTok = url.includes("tiktok.com");
+    const isDouyin = url.includes("douyin.com");
+    const isXHS =
+      url.includes("xiaohongshu.com") || url.includes("xhslink.com");
 
     if (!isTikTok && !isXHS && !isDouyin) {
-      throw new Error('Vui lòng nhập link Xiaohongshu, TikTok hoặc Douyin hợp lệ.');
+      throw new Error(
+        "Vui lòng nhập link Xiaohongshu, TikTok hoặc Douyin hợp lệ.",
+      );
     }
 
     // --- TIKTOK & DOUYIN LOGIC ---
     if (isTikTok || isDouyin) {
       try {
-        const tikwmRes = await axios.get('https://www.tikwm.com/api/', {
+        const tikwmRes = await axios.get("https://www.tikwm.com/api/", {
           params: {
             url: url,
-            hd: 1
+            hd: 1,
           },
-          timeout: 10000
+          timeout: 10000,
         });
 
         const data = tikwmRes.data;
         if (data.code === 0 && data.data) {
           const videoData = data.data;
-          
+
           // Handle image posts
           if (videoData.images && videoData.images.length > 0) {
-             return {
-                type: 'image',
-                title: videoData.title || (isTikTok ? 'TikTok Images' : 'Douyin Images'),
-                desc: videoData.title || '',
-                images: videoData.images,
-                author: videoData.author?.nickname || 'Unknown'
-             };
+            return {
+              type: "image",
+              title:
+                videoData.title ||
+                (isTikTok ? "TikTok Images" : "Douyin Images"),
+              desc: videoData.title || "",
+              images: videoData.images,
+              author: videoData.author?.nickname || "Unknown",
+            };
           }
 
           // Determine video URL based on watermark preference
@@ -96,41 +105,51 @@ async function startServer() {
             videoUrl = videoData.wmplay || videoData.play;
           }
 
-          if (!videoUrl.startsWith('http')) {
-            videoUrl = 'https://www.tikwm.com' + videoUrl;
+          if (!videoUrl.startsWith("http")) {
+            videoUrl = "https://www.tikwm.com" + videoUrl;
           }
 
           return {
-            type: 'video',
-            title: videoData.title || (isTikTok ? 'TikTok Video' : 'Douyin Video'),
-            desc: videoData.title || '',
+            type: "video",
+            title:
+              videoData.title || (isTikTok ? "TikTok Video" : "Douyin Video"),
+            desc: videoData.title || "",
             videoUrl: videoUrl,
             coverUrl: videoData.cover,
-            author: videoData.author?.nickname || 'Unknown'
+            author: videoData.author?.nickname || "Unknown",
           };
         } else {
-          throw new Error(data.msg || 'Không thể lấy dữ liệu. Link có thể không hợp lệ hoặc video ở chế độ riêng tư.');
+          throw new Error(
+            data.msg ||
+              "Không thể lấy dữ liệu. Link có thể không hợp lệ hoặc video ở chế độ riêng tư.",
+          );
         }
       } catch (err: any) {
-        console.error('TikTok/Douyin fetch error:', err.message);
-        throw new Error(err.message.includes('Không thể lấy dữ liệu') ? err.message : 'Lỗi kết nối đến máy chủ tải video. Vui lòng thử lại sau.');
+        console.error("TikTok/Douyin fetch error:", err.message);
+        throw new Error(
+          err.message.includes("Không thể lấy dữ liệu")
+            ? err.message
+            : "Lỗi kết nối đến máy chủ tải video. Vui lòng thử lại sau.",
+        );
       }
     }
 
     // --- XIAOHONGSHU LOGIC ---
     let xhsUrl = url;
-    if (xhsUrl.includes('/discovery/item/')) {
-      xhsUrl = xhsUrl.replace('/discovery/item/', '/explore/');
+    if (xhsUrl.includes("/discovery/item/")) {
+      xhsUrl = xhsUrl.replace("/discovery/item/", "/explore/");
     }
 
     // 1. Fetch the initial URL to handle redirects (e.g., xhslink.com)
     const initialResponse = await axios.get(xhsUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
+        "User-Agent":
+          "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1",
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
       },
-      maxRedirects: 5
+      maxRedirects: 5,
     });
 
     const finalUrl = initialResponse.request.res.responseUrl || url;
@@ -138,14 +157,17 @@ async function startServer() {
 
     // 2. Extract window.__INITIAL_STATE__
     const $ = cheerio.load(html);
-    let initialStateStr = '';
-    
-    $('script').each((i, el) => {
+    let initialStateStr = "";
+
+    $("script").each((i, el) => {
       const scriptContent = $(el).html();
-      if (scriptContent && scriptContent.includes('window.__INITIAL_STATE__=')) {
-        const startIndex = scriptContent.indexOf('window.__INITIAL_STATE__=');
+      if (
+        scriptContent &&
+        scriptContent.includes("window.__INITIAL_STATE__=")
+      ) {
+        const startIndex = scriptContent.indexOf("window.__INITIAL_STATE__=");
         if (startIndex !== -1) {
-          const jsonStart = scriptContent.indexOf('{', startIndex);
+          const jsonStart = scriptContent.indexOf("{", startIndex);
           if (jsonStart !== -1) {
             let braceCount = 0;
             let inString = false;
@@ -154,25 +176,25 @@ async function startServer() {
 
             for (let j = jsonStart; j < scriptContent.length; j++) {
               const char = scriptContent[j];
-              
+
               if (escapeNext) {
                 escapeNext = false;
                 continue;
               }
-              
-              if (char === '\\') {
+
+              if (char === "\\") {
                 escapeNext = true;
                 continue;
               }
-              
+
               if (char === '"') {
                 inString = !inString;
                 continue;
               }
-              
+
               if (!inString) {
-                if (char === '{') braceCount++;
-                else if (char === '}') {
+                if (char === "{") braceCount++;
+                else if (char === "}") {
                   braceCount--;
                   if (braceCount === 0) {
                     jsonEnd = j + 1;
@@ -185,7 +207,7 @@ async function startServer() {
             if (jsonEnd !== -1) {
               initialStateStr = scriptContent.substring(jsonStart, jsonEnd);
               // Replace undefined with null to make it valid JSON
-              initialStateStr = initialStateStr.replace(/undefined/g, 'null');
+              initialStateStr = initialStateStr.replace(/undefined/g, "null");
             }
           }
         }
@@ -194,18 +216,24 @@ async function startServer() {
 
     if (!initialStateStr) {
       // Try alternative: window.__INITIAL_DATA__
-      $('script').each((i, el) => {
+      $("script").each((i, el) => {
         const scriptContent = $(el).html();
-        if (scriptContent && scriptContent.includes('window.__INITIAL_DATA__=')) {
-          const startIndex = scriptContent.indexOf('window.__INITIAL_DATA__=');
+        if (
+          scriptContent &&
+          scriptContent.includes("window.__INITIAL_DATA__=")
+        ) {
+          const startIndex = scriptContent.indexOf("window.__INITIAL_DATA__=");
           if (startIndex !== -1) {
-            const jsonStart = scriptContent.indexOf('{', startIndex);
+            const jsonStart = scriptContent.indexOf("{", startIndex);
             if (jsonStart !== -1) {
               // Simple extraction for now
-              const jsonEnd = scriptContent.lastIndexOf('}');
+              const jsonEnd = scriptContent.lastIndexOf("}");
               if (jsonEnd > jsonStart) {
-                initialStateStr = scriptContent.substring(jsonStart, jsonEnd + 1);
-                initialStateStr = initialStateStr.replace(/undefined/g, 'null');
+                initialStateStr = scriptContent.substring(
+                  jsonStart,
+                  jsonEnd + 1,
+                );
+                initialStateStr = initialStateStr.replace(/undefined/g, "null");
               }
             }
           }
@@ -214,20 +242,23 @@ async function startServer() {
     }
 
     if (!initialStateStr) {
-      throw new Error('Could not find video data on this page. Make sure it is a valid Xiaohongshu post URL.');
+      throw new Error(
+        "Could not find video data on this page. Make sure it is a valid Xiaohongshu post URL.",
+      );
     }
 
     let initialState: any;
     try {
       initialState = JSON.parse(initialStateStr);
     } catch (e) {
-      throw new Error('Failed to parse video data.');
+      throw new Error("Failed to parse video data.");
     }
 
     // 3. Navigate the JSON to find the video URL
     let noteData: any = null;
     if (initialState?.note?.noteDetailMap) {
-      noteData = (Object.values(initialState.note.noteDetailMap)[0] as any)?.note;
+      noteData = (Object.values(initialState.note.noteDetailMap)[0] as any)
+        ?.note;
     } else if (initialState?.noteData?.data?.noteData) {
       noteData = initialState.noteData.data.noteData;
     } else if (initialState?.noteData) {
@@ -235,68 +266,75 @@ async function startServer() {
     }
 
     if (!noteData) {
-      throw new Error('Could not find video data on this page. Make sure it is a valid Xiaohongshu post URL.');
+      throw new Error(
+        "Could not find video data on this page. Make sure it is a valid Xiaohongshu post URL.",
+      );
     }
 
-    if (noteData.type !== 'video' && noteData.type !== 'normal') {
-       const images: string[] = (noteData.imageList || []).map((img: any) => img.urlDefault || img.url);
-       if (images.length > 0) {
-           return {
-               type: 'image',
-               title: noteData.title || 'Xiaohongshu Images',
-               desc: noteData.desc || '',
-               images: images,
-               author: noteData.user?.nickname || 'Unknown'
-           };
-       }
-       throw new Error('This post does not contain a video or images.');
+    if (noteData.type !== "video" && noteData.type !== "normal") {
+      const images: string[] = (noteData.imageList || []).map(
+        (img: any) => img.urlDefault || img.url,
+      );
+      if (images.length > 0) {
+        return {
+          type: "image",
+          title: noteData.title || "Xiaohongshu Images",
+          desc: noteData.desc || "",
+          images: images,
+          author: noteData.user?.nickname || "Unknown",
+        };
+      }
+      throw new Error("This post does not contain a video or images.");
     }
 
     const h265 = noteData.video?.media?.stream?.h265;
     const h264 = noteData.video?.media?.stream?.h264;
-    
-    let videoUrl = '';
+
+    let videoUrl = "";
     if (h265 && h265.length > 0) {
       videoUrl = h265[0].masterUrl;
     } else if (h264 && h264.length > 0) {
       videoUrl = h264[0].masterUrl;
     }
 
-    const coverUrl = noteData.imageList?.[0]?.urlDefault || noteData.imageList?.[0]?.url;
+    const coverUrl =
+      noteData.imageList?.[0]?.urlDefault || noteData.imageList?.[0]?.url;
 
     if (!videoUrl) {
-      throw new Error('Could not extract video URL.');
+      throw new Error("Could not extract video URL.");
     }
 
     return {
-      type: 'video',
-      title: noteData.title || 'Xiaohongshu Video',
-      desc: noteData.desc || '',
+      type: "video",
+      title: noteData.title || "Xiaohongshu Video",
+      desc: noteData.desc || "",
       videoUrl: videoUrl,
       coverUrl: coverUrl,
-      author: noteData.user?.nickname || 'Unknown'
+      author: noteData.user?.nickname || "Unknown",
     };
   }
 
   // API Route to fetch Xiaohongshu or TikTok video
-  app.post('/api/download', async (req, res) => {
+  app.post("/api/download", async (req, res) => {
     try {
       const { url, noWatermark } = req.body;
-      if (!url) return res.status(400).json({ error: 'URL is required' });
+      if (!url) return res.status(400).json({ error: "URL is required" });
       const result = await processUrl(url, !!noWatermark);
       return res.json(result);
     } catch (error: any) {
-      console.error('Download error:', error.message);
-      res.status(500).json({ error: error.message || 'Failed to process the URL.' });
+      console.error("Download error:", error.message);
+      res
+        .status(500)
+        .json({ error: error.message || "Failed to process the URL." });
     }
   });
 
   // Bulk download endpoint
-  app.post('/api/bulk-download', async (req, res) => {
+  app.post("/api/bulk-download", async (req, res) => {
     try {
       const { urls, noWatermark } = req.body;
       if (!urls || !Array.isArray(urls)) {
-        return res.status(400).json({ error: 'URLs array is required' });
+        return res.status(400).json({ error: "URLs array is required" });
       }
 
       const results: Array<{
@@ -314,21 +352,21 @@ async function startServer() {
         }
         // Add a delay to respect the 1 request/second limit of the TikWM API
         if (urls.indexOf(url) < urls.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 1200));
+          await new Promise((resolve) => setTimeout(resolve, 1200));
         }
       }
 
       return res.json({ results });
     } catch (error: any) {
-      console.error('Bulk download error:', error.message);
-      res.status(500).json({ error: 'Failed to process bulk download.' });
+      console.error("Bulk download error:", error.message);
+      res.status(500).json({ error: "Failed to process bulk download." });
     }
   });
 
   // Custom Watermark endpoint
-  app.post('/api/edit/custom-watermark', async (req, res) => {
+  app.post("/api/edit/custom-watermark", async (req, res) => {
     const { url, type, text, image, filename } = req.body;
-    if (!url) return res.status(400).send('URL is required');
+    if (!url) return res.status(400).send("URL is required");
 
     const jobId = uuidv4();
     const tmpDir = os.tmpdir();
@@ -339,119 +377,393 @@ async function startServer() {
     try {
       // 1. Download video
       const response = await axios({
-        method: 'GET',
+        method: "GET",
         url: url,
-        responseType: 'stream',
-        headers: { 'User-Agent': 'Mozilla/5.0' }
+        responseType: "stream",
+        headers: { "User-Agent": "Mozilla/5.0" },
       });
 
       const writer = fs.createWriteStream(inputVideo);
       response.data.pipe(writer);
       await new Promise((resolve, reject) => {
-        writer.on('finish', () => resolve(null));
-        writer.on('error', reject);
+        writer.on("finish", () => resolve(null));
+        writer.on("error", reject);
       });
 
       // 2. Apply watermark
       await new Promise((resolve, reject) => {
         let command = ffmpeg(inputVideo);
 
-        if (type === 'text' && text) {
+        if (type === "text" && text) {
           const escapedText = text.replace(/'/g, "'\\\\''");
-          command = command.videoFilters(`drawtext=text='${escapedText}':x=(w-text_w)/2:y=h-text_h-20:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=5`);
-        } else if (type === 'image' && image) {
+          command = command.videoFilters(
+            `drawtext=text='${escapedText}':x=(w-text_w)/2:y=h-text_h-20:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=5`,
+          );
+        } else if (type === "image" && image) {
           const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
-          fs.writeFileSync(watermarkImgPath, base64Data, 'base64');
-          
-          command = command
-            .input(watermarkImgPath)
-            .complexFilter([
-              {
-                filter: 'scale',
-                options: '100:-1',
-                inputs: '[1:v]',
-                outputs: 'wm'
-              },
-              {
-                filter: 'overlay',
-                options: 'W-w-10:H-h-10',
-                inputs: ['[0:v]', 'wm']
-              }
-            ]);
+          fs.writeFileSync(watermarkImgPath, base64Data, "base64");
+
+          command = command.input(watermarkImgPath).complexFilter([
+            {
+              filter: "scale",
+              options: "100:-1",
+              inputs: "[1:v]",
+              outputs: "wm",
+            },
+            {
+              filter: "overlay",
+              options: "W-w-10:H-h-10",
+              inputs: ["[0:v]", "wm"],
+            },
+          ]);
         }
 
         command
           .output(outputVideo)
-          .on('error', (err) => {
-            console.error('FFmpeg error:', err);
+          .on("error", (err) => {
+            console.error("FFmpeg error:", err);
             reject(err);
           })
-          .on('end', () => resolve(null))
+          .on("end", () => resolve(null))
           .run();
       });
 
       res.download(outputVideo, filename || `watermarked_${jobId}.mp4`, () => {
         // Cleanup
-        [inputVideo, outputVideo, watermarkImgPath].forEach(f => {
+        [inputVideo, outputVideo, watermarkImgPath].forEach((f) => {
           if (fs.existsSync(f)) fs.unlinkSync(f);
         });
       });
-
     } catch (error: any) {
-      console.error('Custom watermark error:', error);
+      console.error("Custom watermark error:", error);
       if (!res.headersSent) {
-        res.status(500).send(error.message || 'Failed to apply watermark');
+        res.status(500).send(error.message || "Failed to apply watermark");
       }
-      [inputVideo, outputVideo, watermarkImgPath].forEach(f => {
+      [inputVideo, outputVideo, watermarkImgPath].forEach((f) => {
         if (fs.existsSync(f)) fs.unlinkSync(f);
       });
     }
   });
+  // Endpoint to rewrite voiceover using AI (Gemini)
+  // Trong server.ts
+
+  app.post("/api/ai/rewrite-voiceover", async (req, res) => {
+    const { videoUrl } = req.body;
+    if (!videoUrl) return res.status(400).json({ error: "URL is required" });
+    if (!process.env.GEMINI_API_KEY)
+      return res.status(500).json({ error: "No Gemini Key" });
+
+    const jobId = uuidv4();
+    const tmpVideoPath = path.join(os.tmpdir(), `${jobId}_analyze.mp4`);
+    let uploadedFile: any = null; // Biến lưu thông tin file đã upload lên Gemini
+
+    try {
+      // 1. Backend tự tải video về
+      const response = await axios({
+        method: "GET",
+        url: videoUrl,
+        responseType: "stream",
+      });
+      const writer = fs.createWriteStream(tmpVideoPath);
+      response.data.pipe(writer);
+      await new Promise((resolve, reject) => {
+        writer.on("finish", resolve);
+        writer.on("error", reject);
+      });
+
+      // 2. Khởi tạo AI SDK (Dùng SDK mới của bạn)
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+      // 3. Upload file lên hệ thống của Gemini
+      uploadedFile = await ai.files.upload({
+        file: tmpVideoPath,
+        mimeType: "video/mp4",
+        displayName: "Video to Analyze",
+      });
+      console.log("Đã upload lên Gemini. Đang chờ xử lý file...");
+
+      // THÊM MỚI: Vòng lặp chờ file chuyển sang trạng thái ACTIVE
+      let fileState = uploadedFile.state;
+      while (fileState === "PROCESSING") {
+        await new Promise((resolve) => setTimeout(resolve, 2000)); // Đợi 2 giây rồi kiểm tra lại
+        const fileInfo = await ai.files.get({ name: uploadedFile.name });
+        fileState = fileInfo.state;
+        console.log(`Trạng thái file: ${fileState}`);
+      }
+
+      if (fileState === "FAILED") {
+        throw new Error(
+          "Hệ thống Gemini báo lỗi khi xử lý video này (FAILED).",
+        );
+      }
+
+      // 4. Gọi Gemini phân tích
+      const prompt = `Bạn là một chuyên gia biên kịch và lồng tiếng. Hãy xem video này và thực hiện các bước sau:
+1. Phân tích nội dung hình ảnh và âm thanh gốc của video.
+2. Viết lại kịch bản lời thoại (voice over) bằng tiếng Việt.
+3. Yêu cầu quan trọng: Lời thoại mới phải bám sát nội dung video, hấp dẫn, tự nhiên và đặc biệt là phải có độ dài (số chữ/tốc độ nói) phù hợp hoàn hảo với thời lượng của video để khi lồng tiếng không bị quá nhanh hay quá chậm.
+4. Trình bày kịch bản theo định dạng: Voiceover Script liên tục, không phân đoạn theo thời gian, không có timestamp, chỉ có nội dung lời thoại thuần túy.
+
+Chỉ trả về nội dung kịch bản bằng tiếng Việt.`;
+
+      const aiResponse = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [
+          {
+            fileData: {
+              fileUri: uploadedFile.uri,
+              mimeType: uploadedFile.mimeType,
+            },
+          },
+          prompt,
+        ],
+      });
+
+      // 5. Trả kết quả về Frontend
+      res.json({ script: aiResponse.text || "" });
+    } catch (error: any) {
+      console.error("AI Rewrite error:", error);
+      res.status(500).json({ error: "Lỗi phân tích video từ AI" });
+    } finally {
+      // Luôn dọn dẹp file để tránh đầy ổ cứng!
+
+      // Xóa file mp4 tạm trên máy chủ
+      if (fs.existsSync(tmpVideoPath)) fs.unlinkSync(tmpVideoPath);
+
+      // Xóa file đã upload trên server của Gemini
+      if (uploadedFile && uploadedFile.name) {
+        try {
+          const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+          await ai.files.delete({ name: uploadedFile.name });
+        } catch (cleanupError) {
+          console.error("Lỗi xóa file trên Gemini:", cleanupError);
+        }
+      }
+    }
+  });
+
+  // Endpoint to generate subtitles using AI
+  app.post("/api/ai/generate-subtitle", async (req, res) => {
+    const { videoUrl } = req.body;
+    if (!videoUrl) return res.status(400).json({ error: "URL là bắt buộc" });
+    if (!process.env.GEMINI_API_KEY)
+      return res.status(500).json({ error: "Chưa cấu hình Gemini API Key" });
+
+    const jobId = uuidv4();
+    const tmpVideoPath = path.join(os.tmpdir(), `${jobId}_sub_input.mp4`);
+    let uploadedFile: any = null;
+
+    try {
+      // 1. Backend tự tải video về để xử lý
+      const response = await axios({
+        method: "GET",
+        url: videoUrl,
+        responseType: "stream",
+        headers: { "User-Agent": "Mozilla/5.0" },
+      });
+
+      const writer = fs.createWriteStream(tmpVideoPath);
+      response.data.pipe(writer);
+      await new Promise((resolve, reject) => {
+        writer.on("finish", resolve);
+        writer.on("error", reject);
+      });
+
+      // 2. Khởi tạo Gemini và Upload File
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+      uploadedFile = await ai.files.upload({
+        file: tmpVideoPath,
+        mimeType: "video/mp4",
+        displayName: `Sub_Process_${jobId}`,
+      });
+
+      // 3. Vòng lặp chờ file ACTIVE (Bắt buộc đối với video)
+      let fileState = uploadedFile.state;
+      while (fileState === "PROCESSING") {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const fileInfo = await ai.files.get({ name: uploadedFile.name });
+        fileState = fileInfo.state;
+        console.log(`[Subtitle] Trạng thái file: ${fileState}`);
+      }
+
+      if (fileState === "FAILED")
+        throw new Error("Gemini không thể xử lý video này.");
+      // 4. Gọi Gemini tạo phụ đề ASS (Giữ nguyên prompt chuyên sâu của bạn)
+      const prompt = `Bạn là một chuyên gia làm phụ đề video. Hãy nghe âm thanh/xem video đầu vào và tạo tệp phụ đề định dạng ASS (Advanced SubStation Alpha) với các yêu cầu sau:
+
+                        1. Ngôn ngữ & Nội dung: Nếu ngôn ngữ gốc là tiếng Việt, hãy chép lời chính xác. Nếu là ngôn ngữ khác, hãy dịch sát nghĩa sang tiếng Việt. Chia nhỏ phụ đề một cách tự nhiên theo ngữ điệu (tối đa khoảng 10 từ mỗi dòng).
+
+                        2. Cấu trúc File ASS: Bạn PHẢI xuất ra đầy đủ 3 phần chuẩn của một file ASS: [Script Info], [V4+ Styles], và [Events].
+                        3. Cấu hình như sau:
+                        - PlayResX: 1080
+                        - PlayResY: 1920
+                        - BorderStyle=3
+                        - Alignment=2
+                        - MarginV=30
+                        - PrimaryColour=&H00FFFFFF 
+                        - BackColour=&H00000000
+                        - WrapStyle=0
+                        - Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+                        - Style: Default,Arial,75,&H00FFFFFF,&H000000FF,&H0000A5FF,&H00000000,-1,0,0,0,100,100,0,0,3,10,0,2,10,10,120,1
+
+                        4. Định dạng thời gian: Tuân thủ nghiêm ngặt chuẩn thời gian của ASS là H:MM:SS.cc (Giờ:Phút:Giây.Phần_trăm_giây, ví dụ: 0:01:23.45).
+
+                        5. Định dạng Dòng thoại (Dialogue): Cấu trúc mỗi dòng trong phần [Events] phải tuân theo mẫu:
+                        Dialogue: 0,Start_Time,End_Time,Default,,0,0,0,,Nội dung phụ đề
+
+                        6. Định dạng hiển thị thêm (Tùy chọn): Nếu cần in nghiêng giọng nói suy nghĩ/nhạc, dùng thẻ {\i1}văn bản{\i0}.
+
+                        7. Xử lý khoảng lặng: Nếu video hoàn toàn không có lời nói, xuất phần [Events] với một dòng duy nhất:
+                        Dialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,{\i1}[Không có tiếng]{\i0}
+
+                        8. Định dạng xuất ra: CHỈ xuất ra văn bản định dạng ASS thô. Tuyệt đối KHÔNG bọc trong khối mã (code block như ass), không dùng Markdown, không có lời chào hay giải thích thừa.`;
+
+      const aiResponse = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [
+          {
+            fileData: {
+              fileUri: uploadedFile.uri,
+              mimeType: uploadedFile.mimeType,
+            },
+          },
+          { text: prompt },
+        ],
+      });
+
+      let srtText = aiResponse.text || "";
+      srtText = srtText
+        .replace(/^```srt\n/i, "")
+        .replace(/^```\n/i, "")
+        .replace(/\n```$/i, "")
+        .trim();
+
+      res.json({
+        srt:
+          srtText || "1\n00:00:00,000 --> 00:00:02,000\n[No Speech Detected]",
+      });
+    } catch (error: any) {
+      console.error("AI Subtitle error:", error);
+      res.status(500).json({ error: "Lỗi tạo phụ đề từ AI" });
+    }
+  });
+
+  // Endpoint TTS using Elevenlabs
+  app.post("/api/tts/convert", async (req, res) => {
+    try {
+      const { text, voiceId } = req.body;
+
+      if (!process.env.ELEVENLABS_API_KEY) {
+        return res
+          .status(500)
+          .json({ error: "Chưa cấu hình Elevenlabs API Key trên server" });
+      }
+
+      const response = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?optimize_streaming_latency=0`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "xi-api-key": process.env.ELEVENLABS_API_KEY,
+          },
+          body: JSON.stringify({
+            text,
+            model_id: "eleven_flash_v2_5",
+            voice_settings: {
+              stability: 0.5,
+              similarity_boost: 0.75,
+              style: 0.0,
+              use_speaker_boost: false,
+            },
+            // model_id: "eleven_multilingual_v2"
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Lỗi HTTP ${response.status}: ${errorText || "Không thể tạo voiceover"}`,
+        );
+      }
+
+      // 1. Lấy dữ liệu thô từ ElevenLabs
+      const audioBuffer = await response.arrayBuffer();
+      
+      // 2. Chuyển thành định dạng Buffer của Node.js
+      const buffer = Buffer.from(audioBuffer);
+
+      // 3. THAY ĐỔI QUAN TRỌNG: Cài đặt Header báo cho trình duyệt biết đây là file Audio
+      res.set({
+        'Content-Type': 'audio/mpeg', // Định dạng file MP3
+        'Content-Length': buffer.length // Kích thước file
+      });
+
+      // 4. Gửi trực tiếp file âm thanh về cho Frontend (không dùng res.json nữa)
+      res.send(buffer);
+    } catch (error: any) {
+      console.error("TTS error:", error);
+      res.status(500).json({ error: "Lỗi tạo voiceover" });
+    }
+  });
 
   // Proxy route to download the video file directly (bypassing CORS on the client)
-  app.get('/api/proxy-download', async (req, res) => {
-      const { url, filename } = req.query;
-      if (!url || typeof url !== 'string') {
-          return res.status(400).send('URL is required');
-      }
+  app.get("/api/proxy-download", async (req, res) => {
+    const { url, filename } = req.query;
+    if (!url || typeof url !== "string") {
+      return res.status(400).send("URL is required");
+    }
 
-      let targetUrl = url;
-      if (targetUrl.startsWith('//')) {
-          targetUrl = 'https:' + targetUrl;
-      } else if (targetUrl.startsWith('/')) {
-          targetUrl = 'https://www.tikwm.com' + targetUrl;
-      }
+    let targetUrl = url;
+    if (targetUrl.startsWith("//")) {
+      targetUrl = "https:" + targetUrl;
+    } else if (targetUrl.startsWith("/")) {
+      targetUrl = "https://www.tikwm.com" + targetUrl;
+    }
 
-      try {
-          const response = await axios({
-              method: 'GET',
-              url: targetUrl,
-              responseType: 'stream',
-              headers: {
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                  'Referer': 'https://www.xiaohongshu.com/'
-              }
-          });
+    try {
+      const response = await axios({
+        method: "GET",
+        url: targetUrl,
+        responseType: "stream",
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Referer: "https://www.xiaohongshu.com/",
+        },
+      });
 
-          const safeFilename = encodeURIComponent((filename as string) || 'video.mp4');
-          res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${safeFilename}`);
-          res.setHeader('Content-Type', response.headers['content-type'] || 'video/mp4');
-          
-          response.data.pipe(res);
-      } catch (error) {
-          console.error('Proxy download error:', error);
-          res.status(500).send('Failed to download file');
-      }
+      const safeFilename = encodeURIComponent(
+        (filename as string) || "video.mp4",
+      );
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename*=UTF-8''${safeFilename}`,
+      );
+      res.setHeader(
+        "Content-Type",
+        response.headers["content-type"] || "video/mp4",
+      );
+
+      response.data.pipe(res);
+    } catch (error) {
+      console.error("Proxy download error:", error);
+      res.status(500).send("Failed to download file");
+    }
   });
 
   // Auto-cut scenes endpoint
-  app.get('/api/edit/auto-cut', async (req, res) => {
+  app.get("/api/edit/auto-cut", async (req, res) => {
     const { url, threshold = 0.3 } = req.query;
-    if (!url || typeof url !== 'string') return res.status(400).send('URL is required');
+    if (!url || typeof url !== "string")
+      return res.status(400).send("URL is required");
 
     let targetUrl = url;
-    if (targetUrl.startsWith('//')) targetUrl = 'https:' + targetUrl;
-    else if (targetUrl.startsWith('/')) targetUrl = 'https://www.tikwm.com' + targetUrl;
+    if (targetUrl.startsWith("//")) targetUrl = "https:" + targetUrl;
+    else if (targetUrl.startsWith("/"))
+      targetUrl = "https://www.tikwm.com" + targetUrl;
 
     const jobId = uuidv4();
     const tmpDir = os.tmpdir();
@@ -460,64 +772,84 @@ async function startServer() {
 
     try {
       const response = await axios({
-        method: 'GET',
+        method: "GET",
         url: targetUrl,
-        responseType: 'stream',
-        headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.xiaohongshu.com/' }
+        responseType: "stream",
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          Referer: "https://www.xiaohongshu.com/",
+        },
       });
 
       const writer = fs.createWriteStream(inputPath);
       response.data.pipe(writer);
       await new Promise((resolve, reject) => {
-        writer.on('finish', () => resolve(null));
-        writer.on('error', reject);
+        writer.on("finish", () => resolve(null));
+        writer.on("error", reject);
       });
 
       const timestamps: number[] = [];
       await new Promise((resolve, reject) => {
         ffmpeg(inputPath)
           .outputOptions([
-            '-filter:v', `select='gt(scene,${threshold})',showinfo`,
-            '-f', 'null'
+            "-filter:v",
+            `select='gt(scene,${threshold})',showinfo`,
+            "-f",
+            "null",
           ])
-          .on('stderr', (stderrLine) => {
+          .on("stderr", (stderrLine) => {
             const match = stderrLine.match(/pts_time:([0-9\.]+)/);
             if (match) {
               const time = parseFloat(match[1]);
               if (time > 0.5) timestamps.push(time);
             }
           })
-          .on('error', reject)
-          .on('end', resolve)
-          .output('/dev/null')
+          .on("error", reject)
+          .on("end", resolve)
+          .output("/dev/null")
           .run();
       });
 
-      const times = timestamps.join(',');
+      const times = timestamps.join(",");
       await new Promise((resolve, reject) => {
         let command = ffmpeg(inputPath);
         if (times.length > 0) {
           command = command.outputOptions([
-            '-f', 'segment',
-            '-segment_times', times,
-            '-reset_timestamps', '1',
-            '-c', 'copy'
+            "-f",
+            "segment",
+            "-segment_times",
+            times,
+            "-reset_timestamps",
+            "1",
+            "-c",
+            "copy",
           ]);
         } else {
-          command = command.outputOptions(['-c', 'copy']);
+          command = command.outputOptions(["-c", "copy"]);
         }
-        command.output(outputPattern).on('error', reject).on('end', resolve).run();
+        command
+          .output(outputPattern)
+          .on("error", reject)
+          .on("end", resolve)
+          .run();
       });
 
-      res.setHeader('Content-Type', 'application/zip');
-      res.setHeader('Content-Disposition', `attachment; filename="auto_cut_${jobId}.zip"`);
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="auto_cut_${jobId}.zip"`,
+      );
 
-      const archive = archiver('zip', { zlib: { level: 9 } });
+      const archive = archiver("zip", { zlib: { level: 9 } });
       archive.pipe(res);
 
-      const files = fs.readdirSync(tmpDir).filter(f => f.startsWith(`${jobId}_out_`) && f.endsWith('.mp4'));
+      const files = fs
+        .readdirSync(tmpDir)
+        .filter((f) => f.startsWith(`${jobId}_out_`) && f.endsWith(".mp4"));
       for (const file of files) {
-        archive.file(path.join(tmpDir, file), { name: file.replace(`${jobId}_`, '') });
+        archive.file(path.join(tmpDir, file), {
+          name: file.replace(`${jobId}_`, ""),
+        });
       }
 
       await archive.finalize();
@@ -528,19 +860,21 @@ async function startServer() {
         fs.unlinkSync(path.join(tmpDir, file));
       }
     } catch (error) {
-      console.error('Auto-cut error:', error);
-      if (!res.headersSent) res.status(500).send('Failed to process video');
+      console.error("Auto-cut error:", error);
+      if (!res.headersSent) res.status(500).send("Failed to process video");
     }
   });
 
   // Trim video endpoint
-  app.get('/api/edit/trim', async (req, res) => {
+  app.get("/api/edit/trim", async (req, res) => {
     const { url, start, end } = req.query;
-    if (!url || typeof url !== 'string') return res.status(400).send('URL is required');
+    if (!url || typeof url !== "string")
+      return res.status(400).send("URL is required");
 
     let targetUrl = url;
-    if (targetUrl.startsWith('//')) targetUrl = 'https:' + targetUrl;
-    else if (targetUrl.startsWith('/')) targetUrl = 'https://www.tikwm.com' + targetUrl;
+    if (targetUrl.startsWith("//")) targetUrl = "https:" + targetUrl;
+    else if (targetUrl.startsWith("/"))
+      targetUrl = "https://www.tikwm.com" + targetUrl;
 
     const jobId = uuidv4();
     const tmpDir = os.tmpdir();
@@ -548,51 +882,66 @@ async function startServer() {
     const outputPath = path.join(tmpDir, `${jobId}_output.mp4`);
 
     try {
+      // 1. Tải video về
       const response = await axios({
-        method: 'GET',
+        method: "GET",
         url: targetUrl,
-        responseType: 'stream',
-        headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.xiaohongshu.com/' }
+        responseType: "stream",
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          Referer: "https://www.xiaohongshu.com/",
+        },
       });
 
       const writer = fs.createWriteStream(inputPath);
       response.data.pipe(writer);
       await new Promise((resolve, reject) => {
-        writer.on('finish', () => resolve(null));
-        writer.on('error', reject);
+        writer.on("finish", resolve);
+        writer.on("error", reject);
       });
 
+      // 2. Cắt video bằng FFMPEG
       await new Promise((resolve, reject) => {
         let command = ffmpeg(inputPath);
         if (start) command = command.setStartTime(parseFloat(start as string));
-        if (end && start) command = command.setDuration(parseFloat(end as string) - parseFloat(start as string));
-        
+        if (end && start)
+          command = command.setDuration(
+            parseFloat(end as string) - parseFloat(start as string),
+          );
+
         command
-          .outputOptions(['-c', 'copy'])
+          .outputOptions(["-c", "copy"])
           .output(outputPath)
-          .on('error', reject)
-          .on('end', resolve)
+          .on("error", reject)
+          .on("end", resolve)
           .run();
       });
 
-      res.download(outputPath, `trimmed_${jobId}.mp4`, () => {
-        fs.unlinkSync(inputPath);
-        fs.unlinkSync(outputPath);
-      });
+      // 3. Gửi file cho người dùng
+      res.download(outputPath, `trimmed_${jobId}.mp4`);
     } catch (error) {
-      console.error('Trim error:', error);
-      if (!res.headersSent) res.status(500).send('Failed to trim video');
+      console.error("Trim error:", error);
+      if (!res.headersSent) res.status(500).send("Failed to trim video");
+    } finally {
+      // DỌN DẸP: Luôn chạy phần này để xóa file rác
+      setTimeout(() => {
+        // Dùng setTimeout 1 chút để đảm bảo res.download đã bắt đầu đọc file
+        if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+        if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+      }, 5000);
     }
   });
 
   // Extract audio endpoint
-  app.get('/api/edit/extract-audio', async (req, res) => {
+  app.get("/api/edit/extract-audio", async (req, res) => {
     const { url } = req.query;
-    if (!url || typeof url !== 'string') return res.status(400).send('URL is required');
+    if (!url || typeof url !== "string")
+      return res.status(400).send("URL is required");
 
     let targetUrl = url;
-    if (targetUrl.startsWith('//')) targetUrl = 'https:' + targetUrl;
-    else if (targetUrl.startsWith('/')) targetUrl = 'https://www.tikwm.com' + targetUrl;
+    if (targetUrl.startsWith("//")) targetUrl = "https:" + targetUrl;
+    else if (targetUrl.startsWith("/"))
+      targetUrl = "https://www.tikwm.com" + targetUrl;
 
     const jobId = uuidv4();
     const tmpDir = os.tmpdir();
@@ -601,26 +950,29 @@ async function startServer() {
 
     try {
       const response = await axios({
-        method: 'GET',
+        method: "GET",
         url: targetUrl,
-        responseType: 'stream',
-        headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.xiaohongshu.com/' }
+        responseType: "stream",
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          Referer: "https://www.xiaohongshu.com/",
+        },
       });
 
       const writer = fs.createWriteStream(inputPath);
       response.data.pipe(writer);
       await new Promise((resolve, reject) => {
-        writer.on('finish', () => resolve(null));
-        writer.on('error', reject);
+        writer.on("finish", () => resolve(null));
+        writer.on("error", reject);
       });
 
       await new Promise((resolve, reject) => {
         ffmpeg(inputPath)
           .noVideo()
-          .audioCodec('libmp3lame')
+          .audioCodec("libmp3lame")
           .output(outputPath)
-          .on('error', reject)
-          .on('end', () => resolve(null))
+          .on("error", reject)
+          .on("end", () => resolve(null))
           .run();
       });
 
@@ -629,107 +981,185 @@ async function startServer() {
         fs.unlinkSync(outputPath);
       });
     } catch (error) {
-      console.error('Extract audio error:', error);
-      if (!res.headersSent) res.status(500).send('Failed to extract audio');
+      console.error("Extract audio error:", error);
+      if (!res.headersSent) res.status(500).send("Failed to extract audio");
     }
   });
 
   // Burn subtitles endpoint
-  app.get('/api/edit/burn-subtitles', async (req, res) => {
+  app.get("/api/edit/burn-subtitles", async (req, res) => {
     const { url, srt } = req.query;
-    if (!url || typeof url !== 'string') return res.status(400).send('URL is required');
-    if (!srt || typeof srt !== 'string') return res.status(400).send('SRT content is required');
+    if (!url || typeof url !== "string")
+      return res.status(400).send("URL is required");
+    if (!srt || typeof srt !== "string")
+      return res.status(400).send("SRT content is required");
 
     let targetUrl = url;
-    if (targetUrl.startsWith('//')) targetUrl = 'https:' + targetUrl;
-    else if (targetUrl.startsWith('/')) targetUrl = 'https://www.tikwm.com' + targetUrl;
+    if (targetUrl.startsWith("//")) targetUrl = "https:" + targetUrl;
+    else if (targetUrl.startsWith("/"))
+      targetUrl = "https://www.tikwm.com" + targetUrl;
 
     const jobId = uuidv4();
     const tmpDir = os.tmpdir();
     const inputVideo = path.join(tmpDir, `${jobId}_input.mp4`);
-    const srtFile = path.join(tmpDir, `${jobId}_subs.srt`);
+    const subtitleFile = path.join(tmpDir, `${jobId}_subs.ass`);
     const outputVideo = path.join(tmpDir, `${jobId}_output.mp4`);
 
     try {
       // 1. Download video
       const response = await axios({
-        method: 'GET',
+        method: "GET",
         url: targetUrl,
-        responseType: 'stream',
-        headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.xiaohongshu.com/' }
+        responseType: "stream",
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          Referer: "https://www.xiaohongshu.com/",
+        },
       });
 
       const writer = fs.createWriteStream(inputVideo);
       response.data.pipe(writer);
       await new Promise((resolve, reject) => {
-        writer.on('finish', () => resolve(null));
-        writer.on('error', reject);
+        writer.on("finish", () => resolve(null));
+        writer.on("error", reject);
       });
 
       // 2. Write SRT file
-      fs.writeFileSync(srtFile, srt);
+      fs.writeFileSync(subtitleFile, srt);
 
       // 3. Burn subtitles into video
-      const escapedSrtPath = srtFile.replace(/\\/g, '/').replace(/:/g, '\\\\:');
-      
+      const escapedSrtPath = subtitleFile.replace(/\\/g, "/").replace(/:/g, "\\\\:");
+
       await new Promise((resolve, reject) => {
         ffmpeg(inputVideo)
-          .outputOptions([
-            '-vf', `subtitles=${escapedSrtPath}`,
-            '-c:a', 'copy'
-          ])
+          .outputOptions(["-vf", `subtitles=${escapedSrtPath}`, "-c:a", "copy"])
           .output(outputVideo)
-          .on('error', reject)
-          .on('end', () => resolve(null))
+          .on("error", reject)
+          .on("end", () => resolve(null))
           .run();
       });
 
       res.download(outputVideo, `subtitled_${jobId}.mp4`, () => {
         // Cleanup
-        [inputVideo, srtFile, outputVideo].forEach(f => {
+        [inputVideo, subtitleFile, outputVideo].forEach((f) => {
           if (fs.existsSync(f)) fs.unlinkSync(f);
         });
       });
-
     } catch (error: any) {
-      console.error('Burn subtitles error:', error);
+      console.error("Burn subtitles error:", error);
       if (!res.headersSent) {
-        res.status(500).send(error.message || 'Failed to burn subtitles');
+        res.status(500).send(error.message || "Failed to burn subtitles");
       }
       // Cleanup on error
-      [inputVideo, srtFile, outputVideo].forEach(f => {
+      [inputVideo, subtitleFile, outputVideo].forEach((f) => {
         if (fs.existsSync(f)) fs.unlinkSync(f);
       });
     }
   });
 
+  // Endpoint to fetch voices from Evenlabs
+  app.get("/api/tts/voices", async (req, res) => {
+    try {
+      const elevenlabs = new ElevenLabsClient({
+        apiKey: process.env.ELEVENLABS_API_KEY,
+      });
+
+      const voices = await elevenlabs.voices.getAll();
+      res.json({ voices });
+    } catch (error) {
+      console.error("Fetch voices error:", error);
+      res.status(500).json({ error: "Failed to fetch voices" });
+    }
+  });
+
+  // Endpoint to check quota/status of Gemini API and Elevenlabs API
+  // Thêm vào server.ts
+  app.get("/api/quota", async (req, res) => {
+    const result: any = {
+      gemini: { available: false },
+      elevenlabs: { available: false },
+    };
+
+    // 1. Check Gemini
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: [{ text: "ping" }],
+        });
+        result.gemini.available = true;
+      } catch (err: any) {
+        result.gemini.error =
+          err.message.includes("quota") || err.message.includes("429")
+            ? "Đã vượt giới hạn free tier."
+            : "Lỗi kết nối Gemini API.";
+      }
+    } else {
+      result.gemini.error = "Chưa cấu hình API Key.";
+    }
+
+    // 2. Check ElevenLabs
+    if (process.env.ELEVENLABS_API_KEY) {
+      try {
+        const response = await axios.get("https://api.elevenlabs.io/v1/user", {
+          headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY },
+        });
+        const sub = response.data.subscription;
+        result.elevenlabs = {
+          available: true,
+          characterLimit: sub?.character_limit || 0,
+          characterCount: sub?.character_count || 0,
+          percentageUsed:
+            sub?.character_limit > 0
+              ? Math.round((sub.character_count / sub.character_limit) * 100)
+              : 0,
+        };
+      } catch (err: any) {
+        result.elevenlabs.error =
+          "API Key ElevenLabs không hợp lệ hoặc hết hạn.";
+      }
+    } else {
+      result.elevenlabs.error = "Chưa cấu hình API Key.";
+    }
+
+    res.json(result);
+  });
+
   // Vite middleware for development
-  if (process.env.NODE_ENV !== 'production') {
+  if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
-      appType: 'spa',
+      appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
   // Global error handler (must be last)
-  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-    console.error('Error:', err);
-    res.status(500).json({
-      success: false,
-      error: err.message || 'Internal server error'
-    });
-  });
+  app.use(
+    (
+      err: any,
+      req: express.Request,
+      res: express.Response,
+      next: express.NextFunction,
+    ) => {
+      console.error("Error:", err);
+      res.status(500).json({
+        success: false,
+        error: err.message || "Internal server error",
+      });
+    },
+  );
 
-  app.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, "0.0.0.0", () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`📝 Environment: ${process.env.NODE_ENV || "development"}`);
   });
 }
 
