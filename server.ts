@@ -34,6 +34,11 @@ async function startServer() {
     next();
   });
 
+  // Route mặc định khi truy cập vào trang chủ của API
+  app.get("/", (req, res) => {
+    res.send("🚀 XHS Downloader API Server is running successfully!");
+  });
+  
   // Health check endpoint
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });

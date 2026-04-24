@@ -62,7 +62,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-router.post("bulk-download", async (req, res) => {
+router.post("/bulk-download", async (req, res) => {
   try {
     const { urls, noWatermark } = req.body;
     if (!urls || !Array.isArray(urls)) {
