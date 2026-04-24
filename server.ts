@@ -4,11 +4,11 @@ import "dotenv/config";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import aiRoutes from "./routes/ai.routes.ts";
-import downloadRoutes from "./routes/download.routes.ts";
-import ttsRoutes from "./routes/tts.routes.ts";
-import editRoutes from "./routes/edit.routes.ts";
-import quotaRoutes from "./routes/quota.routes.ts";
+import aiRoutes from "./routes/ai.routes.js";
+import downloadRoutes from "./routes/download.routes.js";
+import ttsRoutes from "./routes/tts.routes.js";
+import editRoutes from "./routes/edit.routes.js";
+import quotaRoutes from "./routes/quota.routes.js";
 
 // Load environment variables
 dotenv.config();
