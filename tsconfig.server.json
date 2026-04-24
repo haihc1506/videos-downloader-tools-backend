@@ -17,7 +17,7 @@
     "sourceMap": true,
     "outDir": "./dist",
     "rootDir": ".",
-    "noEmit": true
+    "noEmit": false
   },
   "include": ["server.ts", "server/**/*.ts"]
 }

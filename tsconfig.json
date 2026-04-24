@@ -16,7 +16,7 @@
     "sourceMap": true,
     "outDir": "./dist",
     "rootDir": ".",
-    "noEmit": true
+    "noEmit": false
   },
   "include": ["server.ts", "server/**/*.ts"],
   "exclude": ["node_modules", "dist"]
