@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { processUrl } from "../services/scraper.service.ts";
+import { processUrl } from "../services/scraper.service.js";
 import axios from "axios";
 
 const router = Router();
