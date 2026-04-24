@@ -68,7 +68,7 @@ router.post("/rewrite-voiceover", async (req, res) => {
                         1. Phân tích nội dung hình ảnh và âm thanh gốc của video.
                         2. Viết lại kịch bản lời thoại (voice over) bằng tiếng Việt.
                         3. Yêu cầu quan trọng: Lời thoại mới phải bám sát nội dung video, hấp dẫn, tự nhiên và đặc biệt là phải có độ dài (số chữ/tốc độ nói) phù hợp hoàn hảo với thời lượng của video để khi lồng tiếng không bị quá nhanh hay quá chậm.
-                        4. Trình bày kịch bản theo định dạng: Voiceover Script liên tục, không phân đoạn theo thời gian, không có timestamp, chỉ có nội dung lời thoại thuần túy.
+                        4. Trình bày kịch bản theo định dạng: Voiceover Script liên tục, không phân đoạn theo thời gian, không có timestamp, chỉ có nội dung lời thoại thuần túy, tùy vào nội dung của video mà sẽ thêm CTA phù hợp ở cuối để thúc đẩy hành động từ người xem.
 
                         Chỉ trả về nội dung kịch bản bằng tiếng Việt.`;
 
